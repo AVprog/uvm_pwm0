@@ -1,1 +1,1 @@
-# UML example for pwm
+# UVM example for pwm
