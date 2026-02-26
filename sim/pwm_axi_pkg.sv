@@ -1,0 +1,330 @@
+package pwm_axi_pkg;
+    import uvm_pkg::*;
+    `include "uvm_macros.svh"
+
+    // AXI Transaction
+    class axi_transaction extends uvm_sequence_item;
+        rand logic [31:0] addr;
+        rand logic [31:0] data;
+        rand bit is_write;
+        logic [1:0] resp = 2'b00;
+        real start_time;
+        real end_time;
+        
+        constraint addr_c {
+            addr[31:4] == 0;
+            addr[3:0] inside {0, 4};
+        }
+        
+        constraint period_data_c {
+            if (is_write && addr[3:0] == 0) data > 0;
+        }
+        
+        `uvm_object_utils_begin(axi_transaction)
+            `uvm_field_int(addr, UVM_ALL_ON | UVM_HEX)
+            `uvm_field_int(data, UVM_ALL_ON | UVM_HEX)
+            `uvm_field_int(is_write, UVM_ALL_ON)
+            `uvm_field_int(resp, UVM_ALL_ON | UVM_BIN)
+            `uvm_field_real(start_time, UVM_ALL_ON | UVM_TIME)
+            `uvm_field_real(end_time, UVM_ALL_ON | UVM_TIME)
+        `uvm_object_utils_end
+        
+        function new(string name = "axi_transaction");
+            super.new(name);
+        endfunction
+        
+        function void set_start_time();
+            start_time = $realtime;
+        endfunction
+        
+        function void set_end_time();
+            end_time = $realtime;
+        endfunction
+        
+        function string convert2string();
+            string s;
+            s = $sformatf("Addr=0x%0h Data=0x%0h %s Resp=%b",
+                          addr,
+                          data,
+                          (is_write) ? "WRITE" : "READ",
+                          resp);
+            s = $sformatf("%s [%0.3f ns - %0.3f ns]", s, start_time, end_time);
+            return s;
+        endfunction
+    endclass
+
+    // AXI Driver
+    class axi_driver extends uvm_driver #(axi_transaction);
+        `uvm_component_utils(axi_driver)
+        virtual axi_if vif;
+        
+        function new(string name, uvm_component parent);
+            super.new(name, parent);
+        endfunction
+        
+        function void build_phase(uvm_phase phase);
+            super.build_phase(phase);
+            if (!uvm_config_db#(virtual axi_if)::get(this, "", "vif", vif))
+                `uvm_fatal("NOVIF", "Virtual interface not set")
+        endfunction
+        
+        task run_phase(uvm_phase phase);
+            vif.reset();
+            forever begin
+                axi_transaction tr;
+                seq_item_port.get_next_item(tr);
+                `uvm_info("DRIVER", $sformatf("Driving transaction: %s", tr.convert2string()), UVM_MEDIUM)
+                
+                if (tr.is_write) begin
+                    vif.drive_write(tr.addr, tr.data);
+                end else begin
+                    logic [31:0] rd_data;
+                    vif.drive_read(tr.addr, rd_data);
+                    tr.data = rd_data;
+                end
+                
+                seq_item_port.item_done();
+                `uvm_info("DRIVER", "Transaction completed", UVM_MEDIUM)
+            end
+        endtask
+    endclass
+
+    // AXI Monitor
+    class axi_monitor extends uvm_monitor;
+        `uvm_component_utils(axi_monitor)
+        virtual axi_if vif;
+        uvm_analysis_port #(axi_transaction) ap;
+        
+        function new(string name, uvm_component parent);
+            super.new(name, parent);
+            ap = new("ap", this);
+        endfunction
+        
+        function void build_phase(uvm_phase phase);
+            super.build_phase(phase);
+            if (!uvm_config_db#(virtual axi_if)::get(this, "", "vif", vif))
+                `uvm_fatal("NOVIF", "Virtual interface not set")
+        endfunction
+        
+        task run_phase(uvm_phase phase);
+            forever begin
+                axi_transaction tr;
+                tr = axi_transaction::type_id::create("tr");
+                tr.set_start_time();
+                
+                // Wait for transaction start
+                @(posedge vif.clk iff (vif.awvalid && vif.awready) || 
+                                  (vif.arvalid && vif.arready));
+                
+                if (vif.awvalid && vif.awready) begin
+                    // Write transaction
+                    tr.addr = vif.awaddr;
+                    tr.is_write = 1;
+                    
+                    // Wait for data phase
+                    @(posedge vif.clk iff vif.wvalid && vif.wready);
+                    tr.data = vif.wdata;
+                    
+                    // Wait for response
+                    @(posedge vif.clk iff vif.bvalid && vif.bready);
+                    tr.resp = vif.bresp;
+                end
+                else if (vif.arvalid && vif.arready) begin
+                    // Read transaction
+                    tr.addr = vif.araddr;
+                    tr.is_write = 0;
+                    
+                    // Wait for data phase
+                    @(posedge vif.clk iff vif.rvalid && vif.rready);
+                    tr.data = vif.rdata;
+                    tr.resp = vif.rresp;
+                end
+                
+                tr.set_end_time();
+                ap.write(tr);
+                `uvm_info("MONITOR", $sformatf("Monitored transaction: %s", tr.convert2string()), UVM_MEDIUM)
+            end
+        endtask
+    endclass
+
+    // PWM Scoreboard
+    class pwm_scoreboard extends uvm_scoreboard;
+        `uvm_component_utils(pwm_scoreboard)
+        uvm_analysis_imp #(axi_transaction, pwm_scoreboard) item_collected_export;
+        
+        // Reference model storage
+        logic [31:0] period_reg = 0;
+        logic [31:0] duty_reg = 0;
+        
+        function new(string name, uvm_component parent);
+            super.new(name, parent);
+            item_collected_export = new("item_collected_export", this);
+        endfunction
+        
+        function void write(axi_transaction tr);
+            // Update reference model
+            if (tr.is_write) begin
+                case (tr.addr[3:0])
+                    4'h0: period_reg = tr.data;
+                    4'h4: duty_reg = (tr.data < period_reg) ? tr.data : period_reg;
+                endcase
+                `uvm_info("SCOREBOARD", $sformatf("Updated registers: Period=%0d, Duty=%0d", 
+                                                 period_reg, duty_reg), UVM_MEDIUM)
+            end 
+            else begin
+                logic [31:0] expected;
+                case (tr.addr[3:0])
+                    4'h0: expected = period_reg;
+                    4'h4: expected = duty_reg;
+                    default: expected = 32'h0;
+                endcase
+                
+                if (tr.data !== expected) begin
+                    `uvm_error("SCOREBOARD", $sformatf("Read mismatch! Addr=0x%0h: Exp=0x%0h, Got=0x%0h", 
+                                                      tr.addr, expected, tr.data))
+                end
+                else begin
+                    `uvm_info("SCOREBOARD", $sformatf("Read match: Addr=0x%0h, Data=0x%0h", 
+                                                     tr.addr, tr.data), UVM_MEDIUM)
+                end
+            end
+        endfunction
+    endclass
+
+    // Test Sequence
+    class test_sequence extends uvm_sequence #(axi_transaction);
+        `uvm_object_utils(test_sequence)
+        
+        virtual axi_if vif;         // Для доступа к тактовому сигналу
+        
+        function new(string name = "test_sequence");
+            super.new(name);
+
+        endfunction
+
+    // Задача для ожидания указанного числа тактов
+    task wait_delay(int cycles);
+        if (cycles <= 0) return;
+        `uvm_info("SEQ_DELAY", $sformatf("Waiting for %0d cycles", cycles), UVM_MEDIUM)
+        repeat (cycles) @(posedge vif.clk);
+    endtask
+        
+        task body();
+            axi_transaction tr;   
+            
+        // Получаем виртуальный интерфейс
+        if (!uvm_config_db#(virtual axi_if)::get(null, get_full_name(), "vif", vif))
+            `uvm_fatal("NOVIF", "Virtual interface not set for sequence")   
+        // Задержка перед началом последовательности
+            wait_delay(20);                  
+                     
+            // Initialize PWM
+            `uvm_do_with(tr, { 
+                addr == 0; 
+                data == 90; 
+                is_write == 1; 
+            })
+            
+            `uvm_do_with(tr, { 
+                addr == 4; 
+                data == 30; 
+                is_write == 1; 
+            })
+
+            wait_delay(500);
+            
+            // Read registers
+            `uvm_do_with(tr, { 
+                addr == 0; 
+                is_write == 0; 
+            })
+            
+            `uvm_do_with(tr, { 
+                addr == 4; 
+                is_write == 0; 
+            })
+            
+            // Test boundary conditions
+            `uvm_do_with(tr, { 
+                addr == 4; 
+                data == 145;  // Should be clipped to 100
+                is_write == 1; 
+            })
+            
+            `uvm_do_with(tr, { 
+                addr == 4;                 
+                is_write == 0; 
+            })
+            
+            // Change period
+            `uvm_do_with(tr, { 
+                addr == 0; 
+                data == 200; 
+                is_write == 1; 
+            })
+
+            `uvm_do_with(tr, { 
+                addr == 0; 
+                data == 10; 
+                is_write == 1; 
+            })
+            
+            `uvm_do_with(tr, { 
+                addr == 4; 
+                data == 5; 
+                is_write == 1; 
+            })
+        endtask
+    endclass
+
+    // Test Environment
+    class test_env extends uvm_env;
+        `uvm_component_utils(test_env)
+        axi_driver driver;
+        axi_monitor monitor;
+        pwm_scoreboard scoreboard;
+        uvm_sequencer #(axi_transaction) sequencer;
+        
+        function new(string name, uvm_component parent);
+            super.new(name, parent);
+        endfunction
+        
+        function void build_phase(uvm_phase phase);
+            super.build_phase(phase);
+            driver = axi_driver::type_id::create("driver", this);
+            monitor = axi_monitor::type_id::create("monitor", this);
+            scoreboard = pwm_scoreboard::type_id::create("scoreboard", this);
+            sequencer = uvm_sequencer #(axi_transaction)::type_id::create("sequencer", this);
+        endfunction
+        
+        function void connect_phase(uvm_phase phase);
+            super.connect_phase(phase);
+            driver.seq_item_port.connect(sequencer.seq_item_export); 
+            monitor.ap.connect(scoreboard.item_collected_export);
+        endfunction
+    endclass
+
+    // Base Test
+    class base_test extends uvm_test;
+        `uvm_component_utils(base_test)
+        test_env env;
+        test_sequence seq;
+        
+        function new(string name, uvm_component parent);
+            super.new(name, parent);
+        endfunction
+        
+        function void build_phase(uvm_phase phase);
+            super.build_phase(phase);
+            env = test_env::type_id::create("env", this);
+            seq = test_sequence::type_id::create("seq");
+        endfunction
+        
+        task run_phase(uvm_phase phase);
+            phase.raise_objection(this);
+            seq.start(env.sequencer);
+            #500; // Allow time for PWM operation
+            phase.drop_objection(this);
+        endtask
+    endclass
+endpackage
