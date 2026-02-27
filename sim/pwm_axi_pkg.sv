@@ -3,6 +3,7 @@ package pwm_axi_pkg;
     `include "uvm_macros.svh"
     `include "sequences/test_sequence.sv"
     `include "scoreboards/pwm_scoreboard.sv"
+    `include "coverages/axi_coverage_collector.sv"
 
     // AXI Transaction
     class axi_transaction extends uvm_sequence_item;
@@ -156,6 +157,7 @@ package pwm_axi_pkg;
         axi_monitor monitor;
         pwm_scoreboard scoreboard;
         uvm_sequencer #(axi_transaction) sequencer;
+        axi_coverage_collector coverage_collector;
         
         function new(string name, uvm_component parent);
             super.new(name, parent);
@@ -167,12 +169,14 @@ package pwm_axi_pkg;
             monitor = axi_monitor::type_id::create("monitor", this);
             scoreboard = pwm_scoreboard::type_id::create("scoreboard", this);
             sequencer = uvm_sequencer #(axi_transaction)::type_id::create("sequencer", this);
+            coverage_collector = axi_coverage_collector::type_id::create("axi_coverage_collector", this);
         endfunction
         
         function void connect_phase(uvm_phase phase);
             super.connect_phase(phase);
             driver.seq_item_port.connect(sequencer.seq_item_export); 
             monitor.ap.connect(scoreboard.item_collected_export);
+            monitor.ap.connect(coverage_collector.analysis_export);
         endfunction
     endclass
 
