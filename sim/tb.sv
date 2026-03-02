@@ -12,7 +12,8 @@ module tb;
     axi_if axi_if0(clk);
     
     // PWM output
-    logic pwm_out;
+    logic pwm_out0;
+    logic pwm_out1;
     
     // Generate clock
     initial begin
@@ -54,7 +55,8 @@ module tb;
         .s_axi_rresp(axi_if0.rresp),
         .s_axi_rvalid(axi_if0.rvalid),
         .s_axi_rready(axi_if0.rready),
-        .pwm_out(pwm_out)
+        .pwm_out0(pwm_out0),
+        .pwm_out1(pwm_out1)
     );
     
     // UVM start
@@ -71,17 +73,17 @@ module tb;
         $timeformat(-9, 3, " ns", 10);        
         forever begin
             @(posedge clk);
-            $display("[%t] PWM_OUT = %b clk_count = %d", $realtime, pwm_out, clk_count);
+            //$display("[%t] PWM_OUT = %b clk_count = %d", $realtime, pwm_out, clk_count);
             clk_count++;
         end
     end
     
     // Simulation control
-    initial begin
-        #8000;
-        $display("\n\nSimulation completed successfully");
-        $finish;
-    end
+    // initial begin
+    //     #10000;
+    //     $display("\n\nSimulation completed successfully");
+    //     $finish;
+    // end
     
     // VCD dumping
     initial begin

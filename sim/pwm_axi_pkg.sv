@@ -15,8 +15,8 @@ package pwm_axi_pkg;
         real end_time;
         
         constraint addr_c {
-            addr[31:4] == 0;
-            addr[3:0] inside {0, 4};
+            addr[31:5] == 0;
+            addr[4:0] inside {0, 4, 8, 4'hC};
         }
         
         constraint period_data_c {
@@ -199,7 +199,7 @@ package pwm_axi_pkg;
         task run_phase(uvm_phase phase);
             phase.raise_objection(this);
             seq.start(env.sequencer);
-            #500; // Allow time for PWM operation
+            #8000; // Allow time for PWM operation
             phase.drop_objection(this);
         endtask
     endclass

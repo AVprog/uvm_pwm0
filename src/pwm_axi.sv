@@ -33,14 +33,19 @@ module pwm_axi #(
     input logic s_axi_rready,
     
     // Выход PWM
-    output logic pwm_out
+    output logic pwm_out0,
+    output logic pwm_out1
 );
 
 // Регистры управления
-logic [31:0] period_reg = 0;
-logic [31:0] duty_reg = 0;
-logic [31:0] counter = 0;
-logic reset_counter;
+logic [31:0] period_reg0 = 0;
+logic [31:0] duty_reg0 = 0;
+logic [31:0] counter0 = 0;
+logic reset_counter0;
+logic [31:0] period_reg1 = 0;
+logic [31:0] duty_reg1 = 0;
+logic [31:0] counter1 = 0;
+logic reset_counter1;
 
 // Состояния конечного автомата AXI
 enum logic [1:0] {
@@ -56,22 +61,33 @@ logic [31:0] araddr_reg;
 // Управление счетчиком PWM
 always_ff @(posedge s_axi_aclk) begin
     if (!s_axi_aresetn) begin
-        counter <= 0;        
+        counter0 <= 0;        
     end else begin
         // Сброс счетчика при изменении периода
-        if (reset_counter) begin
-            counter <= 0;
-        end else if (period_reg != 0) begin
-            if (counter >= period_reg - 1)
-                counter <= 0;
-            else
-                counter <= counter + 1;
+        if (reset_counter0) begin
+            counter0 <= 0;
+            counter1 <= 0;
+        end else 
+        begin        
+            if (period_reg0 != 0) begin
+                if (counter0 >= period_reg0 - 1)
+                    counter0 <= 0;
+                else
+                    counter0 <= counter0 + 1;
+            end
+            if (period_reg1 != 0) begin
+                if (counter1 >= period_reg1 - 1)
+                    counter1 <= 0;
+                else
+                    counter1 <= counter1 + 1;
+            end
         end
     end
 end
 
 // Генерация выхода PWM
-assign pwm_out = (period_reg != 0) && (counter < duty_reg);
+assign pwm_out0 = (period_reg0 != 0) && (counter0 < duty_reg0);
+assign pwm_out1 = (period_reg1 != 0) && (counter1 < duty_reg1);
 
 // Логика конечного автомата AXI
 always_ff @(posedge s_axi_aclk) begin
@@ -82,9 +98,11 @@ always_ff @(posedge s_axi_aclk) begin
         s_axi_bvalid <= 1'b0;
         s_axi_arready <= 1'b1;
         s_axi_rvalid <= 1'b0;
-        reset_counter <= 1'b0;
+        reset_counter0 <= 1'b0;
+        reset_counter1 <= 1'b0;
     end else begin
-        reset_counter <= 1'b0; // Сброс флага по умолчанию
+        reset_counter0 <= 1'b0; // Сброс флага по умолчанию
+        reset_counter1 <= 1'b0; // Сброс флага по умолчанию
         
         case (state)
             IDLE: begin
@@ -111,14 +129,24 @@ always_ff @(posedge s_axi_aclk) begin
                     // Запись в регистры
                     case (awaddr_reg)
                         4'h0: begin // Регистр периода
-                            period_reg <= s_axi_wdata;
-                            reset_counter <= 1'b1; // Инициировать сброс счетчика
-                            if (duty_reg > s_axi_wdata)
-                                duty_reg <= s_axi_wdata; // Автокоррекция duty
+                            period_reg0 <= s_axi_wdata;
+                            reset_counter0 <= 1'b1; // Инициировать сброс счетчика
+                            if (duty_reg0 > s_axi_wdata)
+                                duty_reg0 <= s_axi_wdata; // Автокоррекция duty
                         end
                         4'h4: begin // Регистр скважности
-                            duty_reg <= (s_axi_wdata < period_reg) ? 
-                                       s_axi_wdata : period_reg;
+                            duty_reg0 <= (s_axi_wdata < period_reg0) ? 
+                                       s_axi_wdata : period_reg0;
+                        end
+                        4'h8: begin // Регистр периода
+                            period_reg1 <= s_axi_wdata;
+                            reset_counter1 <= 1'b1; // Инициировать сброс счетчика
+                            if (duty_reg1 > s_axi_wdata)
+                                duty_reg1 <= s_axi_wdata; // Автокоррекция duty
+                        end
+                        4'hC: begin // Регистр скважности
+                            duty_reg1 <= (s_axi_wdata < period_reg1) ? 
+                                       s_axi_wdata : period_reg1;
                         end
                     endcase
                     state <= IDLE;
@@ -128,8 +156,10 @@ always_ff @(posedge s_axi_aclk) begin
             READ: begin
                 s_axi_rvalid <= 1'b1;
                 case (araddr_reg)
-                    4'h0: s_axi_rdata <= period_reg;
-                    4'h4: s_axi_rdata <= duty_reg;
+                    4'h0: s_axi_rdata <= period_reg0;
+                    4'h4: s_axi_rdata <= duty_reg0;
+                    4'h8: s_axi_rdata <= period_reg1;
+                    4'hC: s_axi_rdata <= duty_reg1;
                     default: s_axi_rdata <= 32'h0;
                 endcase
                 
