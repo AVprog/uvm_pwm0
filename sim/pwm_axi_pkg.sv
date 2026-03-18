@@ -110,9 +110,9 @@ package pwm_axi_pkg;
             if (!uvm_config_db#(virtual axi_if)::get(this, "", "vif", vif))
                 `uvm_fatal("NOVIF", "Virtual interface not set")
             if(!uvm_config_db#(virtual pwm_ch_if)::get(this, "", "pwm_vif_ch0", vif_chanel0))
-                `uvm_fatal("NOVIF", "No interface for PWM channel")
+                `uvm_fatal("NOVIF", "No interface for PWM channel0")
             if(!uvm_config_db#(virtual pwm_ch_if)::get(this, "", "pwm_vif_ch1", vif_chanel1))
-                `uvm_fatal("NOVIF", "No interface for PWM channel")
+                `uvm_fatal("NOVIF", "No interface for PWM channel1")
         endfunction
         
         task run_phase(uvm_phase phase);
