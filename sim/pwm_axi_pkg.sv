@@ -97,6 +97,7 @@ package pwm_axi_pkg;
         `uvm_component_utils(axi_monitor)
         virtual axi_if vif;
         virtual pwm_ch_if vif_chanel0;
+        virtual pwm_ch_if vif_chanel1;
         uvm_analysis_port #(axi_transaction) ap;
         
         function new(string name, uvm_component parent);
@@ -108,7 +109,9 @@ package pwm_axi_pkg;
             super.build_phase(phase);
             if (!uvm_config_db#(virtual axi_if)::get(this, "", "vif", vif))
                 `uvm_fatal("NOVIF", "Virtual interface not set")
-             if(!uvm_config_db#(virtual pwm_ch_if)::get(this, "", "pwm_vif", vif_chanel0))
+            if(!uvm_config_db#(virtual pwm_ch_if)::get(this, "", "pwm_vif_ch0", vif_chanel0))
+                `uvm_fatal("NOVIF", "No interface for PWM channel")
+            if(!uvm_config_db#(virtual pwm_ch_if)::get(this, "", "pwm_vif_ch1", vif_chanel1))
                 `uvm_fatal("NOVIF", "No interface for PWM channel")
         endfunction
         
@@ -149,7 +152,8 @@ package pwm_axi_pkg;
                 tr.set_end_time();
                 ap.write(tr);                
                 `uvm_info("MONITOR", $sformatf("Monitored transaction: %s", tr.convert2string()), UVM_MEDIUM)
-                `uvm_info("MONITOR", $sformatf("counter: %d", vif_chanel0.counter), UVM_MEDIUM)
+                `uvm_info("MONITOR", $sformatf("counter chanel0: %d", vif_chanel0.counter), UVM_MEDIUM)
+                `uvm_info("MONITOR", $sformatf("counter chanel1: %d", vif_chanel1.counter), UVM_MEDIUM)
             end
         endtask
     endclass
